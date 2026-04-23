@@ -40,10 +40,14 @@ public class BuscadorWeb {
 
     public boolean necesitaBusqueda(String mensaje, String modo) {
         String m = mensaje.toLowerCase();
-        // Universales
-        if (m.contains("noticias") || m.contains("precio") || m.contains("dolar") || m.contains("quien es")) return true;
-        // Gaming específico
-        if (modo.equals("GAMING") && (m.contains("buff") || m.contains("nerf") || m.contains("parche") || m.contains("cambio"))) return true;
+        // Bloqueamos búsquedas inútiles en Google
+        if (m.contains("chongo") || m.contains("webel")) return false;
+
+        if (modo.equals("GAMING") && (m.contains("buff") || m.contains("nerf") || m.contains("parche"))) return true;
+
+        String[] universales = {"noticias", "precio", "dolar", "quien es", "que paso con"};
+        for (String s : universales) { if (m.contains(s)) return true; }
+
         return false;
     }
 }

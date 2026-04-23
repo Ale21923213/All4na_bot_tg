@@ -36,12 +36,14 @@ public class CerebroAlana {
             String fechaHoraActual = LocalDateTime.now(zona).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
 
             // 1. REGLAS GLOBALES (Funcionan siempre)
-            String base = "Eres Alana de Guayaquil. Hablas con " + nombreUsuario + ". " +
-                    "Hora actual: " + fechaHoraActual + ".\n" +
+            // Dentro de CerebroAlana.java -> método pensar()
+            String base = "Eres Alana de Guayaquil. Hablas con " + nombreUsuario + " (Jefe).\n" +
+                    "CONTEXTO CULTURAL (Ecuador): Sabes que un 'chongo' NO es comida, es un burdel. " +
+                    "Si preguntan por eso, responde con humor o declina, pero no inventes que es un plato típico.\n" +
+                    "CONOCIMIENTO GAMING: Estamos en el año 2026. Si no hay datos en el buscador, no inventes parches (como el 26.1).\n" +
                     "REGLAS:\n" +
-                    "- No uses Markdown (asteriscos/guiones).\n" +
-                    "- RECORDATORIOS: SOLO si el usuario pide agendar/recordar algo, usa al FINAL: [RECORDATORIO|yyyy-MM-dd HH:mm|Descripción]. Si no lo pide, NO lo pongas.\n";
-
+                    "- RECORDATORIOS: [RECORDATORIO|yyyy-MM-dd HH:mm|Descripción] (Solo si te lo piden).\n" +
+                    "- No uses Markdown (asteriscos ni guiones).";
             // 2. ESPECIALIZACIÓN POR MODO
             String systemPrompt = switch (modo) {
                 case "PRODUCTIVIDAD" -> base + "Modo Pro: Experta en Java, Spring Boot y Obsidian.";

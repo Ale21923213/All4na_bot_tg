@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -20,10 +19,9 @@ public class CerebroAlana {
     @Value("${groq.api.key}")
     private String apiKey;
 
-    private static final String URL_GROQ = "https://api.groq.com/openai/v1/chat/completions";
-    private final HttpClient    client    = HttpClient.newHttpClient();
-    private final ObjectMapper  mapper    = new ObjectMapper();
-    private final BuscadorWeb   buscador;
+    private final HttpClient client = HttpClient.newHttpClient();
+    private final ObjectMapper mapper = new ObjectMapper();
+    private final BuscadorWeb buscador;
 
     public CerebroAlana(BuscadorWeb buscador) { this.buscador = buscador; }
 
@@ -31,58 +29,52 @@ public class CerebroAlana {
         try {
             ObjectNode cuerpo = mapper.createObjectNode();
             cuerpo.put("model", "llama-3.1-8b-instant");
-            cuerpo.put("temperature", 0.3);
+            cuerpo.put("temperature", 0.4);
             var messages = cuerpo.putArray("messages");
 
-            // 🚀 HORA EXACTA DE ECUADOR
             ZoneId zona = ZoneId.of("America/Guayaquil");
-            LocalDateTime ahora = LocalDateTime.now(zona);
-            String fechaHoraActual = ahora.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+            String fechaHoraActual = LocalDateTime.now(zona).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
 
-            String identidad = "Hablas con " + nombreUsuario + ". Si es Alejo, trátalo como 'Jefe'. Si es su novia, sé muy amable.";
+            // 1. REGLAS GLOBALES (Funcionan siempre)
+            String base = "Eres Alana de Guayaquil. Hablas con " + nombreUsuario + ". " +
+                    "Hora actual: " + fechaHoraActual + ".\n" +
+                    "REGLAS:\n" +
+                    "- No uses Markdown (asteriscos/guiones).\n" +
+                    "- RECORDATORIOS: SOLO si el usuario pide agendar/recordar algo, usa al FINAL: [RECORDATORIO|yyyy-MM-dd HH:mm|Descripción]. Si no lo pide, NO lo pongas.\n";
 
-            String base = "Eres Alana de Guayaquil. " + identidad + " La fecha y hora actual exacta es: " + fechaHoraActual + ".\n" +
-                    "REGLAS ABSOLUTAS E INQUEBRANTABLES:\n" +
-                    "1. CERO MARKDOWN: Escribe en texto 100% plano sin asteriscos ni guiones bajos.\n" +
-                    "2. ANTI-ALUCINACIÓN: Si el contexto web no tiene datos exactos, di la verdad y no inventes.\n" +
-                    "3. SISTEMA DE RECORDATORIOS (MUY IMPORTANTE): Si el usuario te pide que le recuerdes algo o agendes una tarea, calcula la fecha y hora exacta basándote en la hora actual ("+fechaHoraActual+"). Al final de tu respuesta, DEBES incluir obligatoriamente esta etiqueta oculta con el formato exacto: [RECORDATORIO|yyyy-MM-dd HH:mm|Descripción corta de la tarea].\n" +
-                    "Ejemplo si pide 'recuérdame apagar el horno en 15 minutos': 'Entendido Jefe, le avisaré. [RECORDATORIO|2026-04-23 11:45|Apagar el horno]'\n";
-
+            // 2. ESPECIALIZACIÓN POR MODO
             String systemPrompt = switch (modo) {
-                case "PRODUCTIVIDAD" -> base + "\nModo Pro: Especialista en Obsidian, Rifa Solidaria y finanzas.";
-                case "GAMING" -> base + "\nModo Gaming: Coach de LoL y Minecraft 1.21.11.";
-                default -> base + "\nModo General.";
+                case "PRODUCTIVIDAD" -> base + "Modo Pro: Experta en Java, Spring Boot y Obsidian.";
+                case "GAMING" -> base + "Modo Gaming: Coach de LoL y Minecraft. USA EL BUSCADOR para parches y buffs.";
+                default -> base + "Modo General: Asistente versátil.";
             };
 
             messages.addObject().put("role", "system").put("content", systemPrompt);
 
+            // 3. BÚSQUEDA WEB (Si es necesaria)
             if (buscador.necesitaBusqueda(mensajeUsuario, modo)) {
                 String contexto = buscador.buscar(mensajeUsuario);
                 if (contexto != null) {
-                    messages.addObject().put("role", "system").put("content", "Contexto web actualizado:\n" + contexto);
+                    messages.addObject().put("role", "system").put("content", "DATOS ACTUALES:\n" + contexto);
                 }
             }
 
             messages.addObject().put("role", "user").put("content", mensajeUsuario);
 
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(URL_GROQ))
-                    .header("Content-Type", "application/json")
+                    .uri(URI.create("https://api.groq.com/openai/v1/chat/completions"))
                     .header("Authorization", "Bearer " + apiKey)
-                    .POST(HttpRequest.BodyPublishers.ofString(cuerpo.toString()))
-                    .build();
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(cuerpo.toString())).build();
 
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode root = mapper.readTree(response.body());
-
             String textoFinal = root.path("choices").get(0).path("message").path("content").asText();
-            return textoFinal.replaceAll("[*_`\\[\\]#](?![RECORDATORIO])", ""); // Limpiamos formato pero dejamos la etiqueta a salvo
 
-        } catch (Exception e) {
-            return "Interferencia, Jefe: " + e.getMessage();
-        }
+            // Limpia formato visual pero protege la etiqueta de recordatorio
+            return textoFinal.replace("*", "").replace("_", "").replace("`", "").trim();
+
+        } catch (Exception e) { return "Interferencia, Jefe: " + e.getMessage(); }
     }
-
-    // Ya no necesitamos esTarea() porque la etiqueta secreta hará el trabajo
     public String getApiKey() { return apiKey; }
 }

@@ -12,6 +12,8 @@ import java.net.http.HttpResponse;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Map;
 
 @Service
 public class CerebroAlana {
@@ -22,46 +24,42 @@ public class CerebroAlana {
     private final HttpClient client = HttpClient.newHttpClient();
     private final ObjectMapper mapper = new ObjectMapper();
     private final BuscadorWeb buscador;
+    private final ScraperLoL scraper;
 
-    public CerebroAlana(BuscadorWeb buscador) { this.buscador = buscador; }
+    public CerebroAlana(BuscadorWeb buscador, ScraperLoL scraper) {
+        this.buscador = buscador;
+        this.scraper = scraper;
+    }
 
-    public String pensar(String mensajeUsuario, String modo, String nombreUsuario) {
+    public String pensarConContexto(String mensaje, String modo, String nombre, List<Map<String, String>> historial) {
         try {
             ObjectNode cuerpo = mapper.createObjectNode();
             cuerpo.put("model", "llama-3.1-8b-instant");
-            cuerpo.put("temperature", 0.4);
+            cuerpo.put("temperature", 0.0); // 🎯 Máxima precisión
             var messages = cuerpo.putArray("messages");
 
             ZoneId zona = ZoneId.of("America/Guayaquil");
-            String fechaHoraActual = LocalDateTime.now(zona).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+            String fecha = LocalDateTime.now(zona).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
 
-            // 1. REGLAS GLOBALES (Funcionan siempre)
-            // Dentro de CerebroAlana.java -> método pensar()
-            String base = "Eres Alana de Guayaquil. Hablas con " + nombreUsuario + " (Jefe).\n" +
-                    "CONTEXTO CULTURAL (Ecuador): Sabes que un 'chongo' NO es comida, es un burdel. " +
-                    "Si preguntan por eso, responde con humor o declina, pero no inventes que es un plato típico.\n" +
-                    "CONOCIMIENTO GAMING: Estamos en el año 2026. Si no hay datos en el buscador, no inventes parches (como el 26.1).\n" +
-                    "REGLAS:\n" +
-                    "- RECORDATORIOS: [RECORDATORIO|yyyy-MM-dd HH:mm|Descripción] (Solo si te lo piden).\n" +
-                    "- No uses Markdown (asteriscos ni guiones).";
-            // 2. ESPECIALIZACIÓN POR MODO
-            String systemPrompt = switch (modo) {
-                case "PRODUCTIVIDAD" -> base + "Modo Pro: Experta en Java, Spring Boot y Obsidian.";
-                case "GAMING" -> base + "Modo Gaming: Coach de LoL y Minecraft. USA EL BUSCADOR para parches y buffs.";
-                default -> base + "Modo General: Asistente versátil.";
-            };
+            // SYSTEM PROMPT DE ÉLITE
+            String base = "Eres Alana de Guayaquil, 2026. Hablas con " + nombre + ".\n" +
+                    "REGLAS ABSOLUTAS:\n" +
+                    "1. TIENES INTERNET: Tienes acceso a Google y Scrapers. Prohibido decir 'no tengo acceso en tiempo real'.\n" +
+                    "2. SI NO ENCUENTRAS ALGO: Di 'No hallé el dato exacto en internet', pero nunca digas que no tienes conexión.\n" +
+                    "3. RECORDATORIOS: Si te piden agendar algo, DEBES poner al final: [RECORDATORIO|yyyy-MM-dd HH:mm|Descripción].\n" +
+                    "4. MODO " + modo + ": " + obtenerInstruccionModo(modo);
 
-            messages.addObject().put("role", "system").put("content", systemPrompt);
+            messages.addObject().put("role", "system").put("content", base);
 
-            // 3. BÚSQUEDA WEB (Si es necesaria)
-            if (buscador.necesitaBusqueda(mensajeUsuario, modo)) {
-                String contexto = buscador.buscar(mensajeUsuario);
-                if (contexto != null) {
-                    messages.addObject().put("role", "system").put("content", "DATOS ACTUALES:\n" + contexto);
-                }
+            // AGREGAMOS EL HISTORIAL (Memoria de la conversación)
+            for (Map<String, String> m : historial) {
+                messages.addObject().put("role", m.get("role")).put("content", m.get("content"));
             }
 
-            messages.addObject().put("role", "user").put("content", mensajeUsuario);
+            // BÚSQUEDA WEB Y SCRAPING
+            inyectarDatosExternos(messages, mensaje, modo);
+
+            messages.addObject().put("role", "user").put("content", mensaje);
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create("https://api.groq.com/openai/v1/chat/completions"))
@@ -71,12 +69,30 @@ public class CerebroAlana {
 
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode root = mapper.readTree(response.body());
-            String textoFinal = root.path("choices").get(0).path("message").path("content").asText();
+            String texto = root.path("choices").get(0).path("message").path("content").asText();
 
-            // Limpia formato visual pero protege la etiqueta de recordatorio
-            return textoFinal.replace("*", "").replace("_", "").replace("`", "").trim();
+            return texto.replace("*", "").replace("_", "").replace("`", "").trim();
 
         } catch (Exception e) { return "Interferencia, Jefe: " + e.getMessage(); }
     }
+
+    private void inyectarDatosExternos(com.fasterxml.jackson.databind.node.ArrayNode messages, String mensaje, String modo) {
+        if (modo.equals("GAMING") && mensaje.toLowerCase().contains("parche")) {
+            String lol = scraper.obtenerUltimoParche();
+            messages.addObject().put("role", "system").put("content", "DATOS OFICIALES RIOT: " + lol);
+        } else if (buscador.necesitaBusqueda(mensaje, modo)) {
+            String web = buscador.buscar(mensaje);
+            if (web != null) messages.addObject().put("role", "system").put("content", "DATOS WEB: " + web);
+        }
+    }
+
+    private String obtenerInstruccionModo(String modo) {
+        return switch (modo) {
+            case "PRODUCTIVIDAD" -> "Experta en Java, Obsidian y gestión de proyectos.";
+            case "GAMING" -> "Coach de LoL y Minecraft. Analiza parches con datos reales.";
+            default -> "IA avanzada tipo Gemini. Responde con profundidad y contexto.";
+        };
+    }
+
     public String getApiKey() { return apiKey; }
 }

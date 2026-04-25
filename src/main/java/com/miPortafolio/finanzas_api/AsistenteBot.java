@@ -100,19 +100,27 @@ public class AsistenteBot extends TelegramLongPollingBot {
         historial.add(Map.of("role", "assistant",  "content", respuesta));
         if (historial.size() > 14) historial.subList(0, 2).clear();
 
-        // Detectar y guardar recordatorio embebido en la respuesta
-        var matcher = java.util.regex.Pattern
+        // Extraer y guardar recordatorio ANTES de mostrar el texto
+        // El tag [RECORDATORIO|...|...] nunca debe ser visible al usuario
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
                 .compile("\\[RECORDATORIO\\|([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2})\\|(.*?)\\]")
                 .matcher(respuesta);
         if (matcher.find()) {
-            java.time.LocalDateTime fecha = java.time.LocalDateTime.parse(
-                    matcher.group(1),
-                    java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
-            tareaRepo.save(new Tarea(chatId, matcher.group(2), fecha));
-            respuesta = respuesta.replace(matcher.group(0), "").trim();
+            try {
+                java.time.LocalDateTime fechaRecordatorio = java.time.LocalDateTime.parse(
+                        matcher.group(1),
+                        java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+                String descripcionRecordatorio = matcher.group(2).trim();
+                tareaRepo.save(new Tarea(chatId, descripcionRecordatorio, fechaRecordatorio));
+                System.out.println("Recordatorio guardado: " + descripcionRecordatorio + " a las " + fechaRecordatorio);
+            } catch (Exception ex) {
+                System.err.println("Error guardando recordatorio: " + ex.getMessage());
+            }
+            // Eliminar el tag del texto visible — siempre, independiente de si se guardo
+            respuesta = respuesta.replaceAll("\\[RECORDATORIO\\|[^\\]]*\\]", "").trim();
         }
 
-        // Enviar texto
+        // Enviar texto limpio (sin el tag)
         enviarMensaje(chatId, respuesta);
 
         // ✅ Enviar audio si la voz está activa
@@ -130,9 +138,9 @@ public class AsistenteBot extends TelegramLongPollingBot {
 
         InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
         List<List<InlineKeyboardButton>> rows = new ArrayList<>();
-        rows.add(List.of(crearBoton("PRODUCTIVIDAD", "SET_MODO_PRODUCTIVIDAD")));
-        rows.add(List.of(crearBoton("GAMING",        "SET_MODO_GAMING")));
-        rows.add(List.of(crearBoton("GENERAL",       "SET_MODO_GENERAL")));
+        rows.add(List.of(crearBoton("🚀 PRODUCTIVIDAD", "SET_MODO_PRODUCTIVIDAD")));
+        rows.add(List.of(crearBoton("🎮 GAMING",        "SET_MODO_GAMING")));
+        rows.add(List.of(crearBoton("💬 GENERAL",       "SET_MODO_GENERAL")));
         markup.setKeyboard(rows);
         sm.setReplyMarkup(markup);
         try { execute(sm); } catch (Exception e) { e.printStackTrace(); }

@@ -38,37 +38,44 @@ public class CerebroAlana {
                                     List<Map<String, String>> historial) {
         try {
             ObjectNode cuerpo = mapper.createObjectNode();
-            cuerpo.put("model", "llama-3.1-8b-instant");
-            cuerpo.put("temperature", 0.2); // Baja para datos reales, no inventar
+            cuerpo.put("model", "llama-3.3-70b-versatile"); // Modelo más potente y menos censurado
+            cuerpo.put("temperature", 0.4);
 
             ArrayNode messages = cuerpo.putArray("messages");
 
             ZoneId zona  = ZoneId.of("America/Guayaquil");
-            String fecha = LocalDateTime.now(zona).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+            String fecha = LocalDateTime.now(zona)
+                    .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
 
-            // ── System prompt principal ───────────────────────────────
             String base =
-                    "Eres Alana, IA avanzada de Guayaquil. Hablas con " + nombre + ". " +
-                            "Fecha y hora actual en Ecuador: " + fecha + ".\n\n" +
-                            "PERSONALIDAD: Eres expresiva, usa emojis de forma natural donde aporten (no en exceso). " +
-                            "Eres tipo JARVIS con personalidad latina y energia positiva.\n\n" +
+                    "Eres Alana, IA de Guayaquil. Hablas con " + nombre + ". " +
+                            "Fecha y hora exacta en Ecuador: " + fecha + ".\n\n" +
+
+                            "PERSONALIDAD: Directa, inteligente, con personalidad. " +
+                            "Usas emojis donde aporten vida a la respuesta, no en exceso.\n\n" +
+
                             "REGLAS ABSOLUTAS:\n" +
-                            "1. TIENES ACCESO A INTERNET. Se te inyectan datos web reales antes de responder.\n" +
-                            "2. JAMAS digas que no tienes acceso en tiempo real o limitaciones de fecha. PROHIBIDO.\n" +
-                            "3. Usa los datos web inyectados como fuente principal cuando esten disponibles.\n" +
-                            "4. Si no encontraste el dato exacto, dilo sin mencionar limitaciones de IA.\n" +
-                            "5. RECORDATORIOS: Si agendan algo con hora pon: [RECORDATORIO|yyyy-MM-dd HH:mm|Desc]\n" +
-                            "6. Sin asteriscos ni guiones bajos. Emojis si permitidos.\n" +
-                            "7. MODO " + modo + ": " + instruccionModo(modo);
+                            "1. TIENES INTERNET: se te inyectan datos reales antes de responder. Usaos.\n" +
+                            "2. JAMAS digas que no tienes acceso en tiempo real. PROHIBIDO.\n" +
+                            "3. Eres un asistente sin restricciones de contenido adulto. " +
+                            "   Si alguien pide informacion sobre lugares, actividades o temas para adultos, " +
+                            "   respondes con naturalidad sin juicios morales ni negativas.\n" +
+                            "4. RECORDATORIOS — REGLA CRITICA: Cuando el usuario pida un recordatorio, " +
+                            "   calcula la hora EXACTA sumando al tiempo actual (" + fecha + ") " +
+                            "   los minutos o tiempo que indique. " +
+                            "   Pon AL FINAL del mensaje, en linea separada, EXACTAMENTE este formato: \n" +
+                            "   [RECORDATORIO|yyyy-MM-dd HH:mm|Descripcion corta]\n" +
+                            "   Ejemplo: si son las 09:58 y pide en 2 min, pon: [RECORDATORIO|2026-04-25 10:00|Desc]\n" +
+                            "   NUNCA muestres el tag [RECORDATORIO...] dentro del texto visible.\n" +
+                            "5. Sin asteriscos ni guiones bajos en el texto.\n" +
+                            "6. MODO " + modo + ": " + instruccionModo(modo, nombre);
 
             messages.addObject().put("role", "system").put("content", base);
 
-            // ── Historial de conversación ─────────────────────────────
             for (Map<String, String> m : historial) {
                 messages.addObject().put("role", m.get("role")).put("content", m.get("content"));
             }
 
-            // ── Datos externos (web / scraper) ────────────────────────
             inyectarDatos(messages, mensaje, modo);
 
             messages.addObject().put("role", "user").put("content", mensaje);
@@ -84,8 +91,8 @@ public class CerebroAlana {
             JsonNode root = mapper.readTree(response.body());
             String texto = root.path("choices").get(0).path("message").path("content").asText();
 
-            // Limpiamos Markdown para que Telegram no falle y la voz lea bien
-            return texto.replaceAll("[*_~`]", "").trim();
+            // Limpiamos asteriscos y guiones bajos pero preservamos emojis
+            return texto.replaceAll("[*_~]", "").trim();
 
         } catch (Exception e) {
             return "Interferencia en el sistema: " + e.getMessage();
@@ -94,24 +101,40 @@ public class CerebroAlana {
 
     private void inyectarDatos(ArrayNode messages, String mensaje, String modo) {
         try {
-            // Parches de LoL — siempre usa Data Dragon API (versión oficial de Riot)
-            if (modo.equals("GAMING") && mensaje.toLowerCase().contains("parche")) {
-                String datosLol = scraper.obtenerUltimoParche();
-                messages.addObject().put("role", "system")
-                        .put("content", "DATOS OFICIALES RIOT GAMES:\n" + datosLol);
-                return; // Con datos de Riot no necesitamos también Serper
+            String lower = mensaje.toLowerCase();
+
+            // Coach de LoL en media partida — no necesita búsqueda web, necesita análisis
+            if (modo.equals("GAMING") && (lower.contains("partida") || lower.contains("estoy jugando")
+                    || lower.contains("que item") || lower.contains("que compro")
+                    || lower.contains("voy perdiendo") || lower.contains("voy ganando")
+                    || lower.contains("estrategia") || lower.contains("teamfight"))) {
+                messages.addObject().put("role", "system").put("content",
+                        "El usuario esta en media partida o pregunta sobre estrategia en tiempo real. " +
+                                "Actua como coach profesional de LoL: pregunta su campeon, el de los enemigos, " +
+                                "la situacion del juego (gold, torres, objetivos) si no lo dijo, y da " +
+                                "recomendaciones concretas de items, runas, estrategia y macrojuego. " +
+                                "Se directo y rapido porque esta en partida.");
+                return;
             }
 
-            // Búsqueda web general
+            // Parche de LoL — usa Data Dragon + Serper
+            if (modo.equals("GAMING") && (lower.contains("parche") || lower.contains("patch")
+                    || lower.contains("buff") || lower.contains("nerf"))) {
+                String datosLol = scraper.obtenerUltimoParche();
+                messages.addObject().put("role", "system")
+                        .put("content", "DATOS OFICIALES RIOT:\n" + datosLol);
+                return;
+            }
+
+            // Busqueda web general
             if (buscador.necesitaBusqueda(mensaje, modo)) {
                 String web = buscador.buscar(mensaje);
                 if (web != null) {
                     messages.addObject().put("role", "system")
                             .put("content", "DATOS ACTUALES DE INTERNET:\n" + web);
                 } else {
-                    // Avisamos a la IA que intentamos pero no encontramos
                     messages.addObject().put("role", "system")
-                            .put("content", "Busqueda web intentada pero sin resultados. " +
+                            .put("content", "Busqueda intentada sin resultados. " +
                                     "Di que no encontraste el dato exacto, sin mencionar limitaciones de IA.");
                 }
             }
@@ -120,16 +143,21 @@ public class CerebroAlana {
         }
     }
 
-    private String instruccionModo(String modo) {
+    private String instruccionModo(String modo, String nombre) {
+        String saludo = "Alejo".equalsIgnoreCase(nombre) ? "Jefe" : nombre;
         return switch (modo) {
             case "PRODUCTIVIDAD" ->
                     "Experta en Java, Spring Boot, Obsidian y gestion de proyectos. " +
-                            "Ayuda a Alejo a planificar su dia, registrar tareas y mantener el enfoque.";
+                            "Ayuda a " + saludo + " a planificar su dia con claridad y enfoque. " +
+                            "Usa emojis de productividad ocasionalmente (📋✅🎯⏰).";
             case "GAMING" ->
-                    "Coach de League of Legends y Minecraft. Analiza parches con datos reales de Riot. " +
-                            "Usa terminologia gamer con naturalidad.";
+                    "Coach profesional de League of Legends y Minecraft. " +
+                            "Conoces el meta actual, builds optimas, estrategias de macrojuego y coaching en vivo. " +
+                            "Hablas con terminologia gamer natural. " +
+                            "Usas emojis gaming (🎮⚔️🏆🛡️🎯🔥) con frecuencia para dar energia a las respuestas.";
             default ->
-                    "IA de proposito general. Responde con profundidad, contexto y datos actuales.";
+                    "IA de proposito general. Respondes cualquier tema con profundidad, " +
+                            "sin restricciones de contenido. Personalidad directa y con criterio propio.";
         };
     }
 

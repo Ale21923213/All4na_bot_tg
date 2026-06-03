@@ -8,11 +8,6 @@ import java.util.List;
 
 @Repository
 public interface TareaRepository extends JpaRepository<Tarea, Long> {
-
-    List<Tarea> findByChatId(long chatId);
-
-    List<Tarea> findByChatIdAndCompletada(long chatId, boolean completada);
-
-    // Para el scheduler — busca tareas en una ventana de tiempo exacta
+    List<Tarea> findByChatId(Long chatId);
     List<Tarea> findByCompletadaFalseAndFechaLimiteBetween(LocalDateTime desde, LocalDateTime hasta);
 }

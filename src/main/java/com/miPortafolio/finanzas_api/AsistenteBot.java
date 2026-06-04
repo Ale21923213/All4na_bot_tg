@@ -10,19 +10,16 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMa
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 public class AsistenteBot extends TelegramLongPollingBot {
 
-    private final CerebroFinanzas         cerebroIA; // ✅ Conectado a la IA de finanzas
+    private final CerebroFinanzas         cerebroIA;
     private final OnboardingService       onboardingService;
     private final DetectorGastos          detectorGastos;
     private final GastoRepository         gastoRepo;
     private final UsuarioConfigRepository configRepo;
-
-    // Memoria de conversación por usuario
-    private final Map<Long, List<Map<String, String>>> historialChat = new ConcurrentHashMap<>();
+    private final ChatMessageRepository   chatRepo; // ✅ Memoria integrada
 
     @Value("${telegram.bot.token}")    private String botToken;
     @Value("${telegram.bot.username}") private String botUsername;
@@ -31,12 +28,14 @@ public class AsistenteBot extends TelegramLongPollingBot {
                         @Lazy OnboardingService onboardingService,
                         DetectorGastos detectorGastos,
                         GastoRepository gastoRepo,
-                        UsuarioConfigRepository configRepo) {
+                        UsuarioConfigRepository configRepo,
+                        ChatMessageRepository chatRepo) { // ✅ Inyectado
         this.cerebroIA         = cerebroIA;
         this.onboardingService = onboardingService;
         this.detectorGastos    = detectorGastos;
         this.gastoRepo         = gastoRepo;
         this.configRepo        = configRepo;
+        this.chatRepo          = chatRepo;
     }
 
     @Override public String getBotUsername() { return botUsername; }
@@ -47,7 +46,7 @@ public class AsistenteBot extends TelegramLongPollingBot {
         try {
             long chatId;
 
-            // ── Botones inline (Onboarding u otros) ────────────────────
+            // ── Botones inline ────────────────────
             if (update.hasCallbackQuery()) {
                 chatId = update.getCallbackQuery().getMessage().getChatId();
                 String data = update.getCallbackQuery().getData();
@@ -66,24 +65,19 @@ public class AsistenteBot extends TelegramLongPollingBot {
             String nombre = update.getMessage().getFrom().getFirstName();
             String texto = update.getMessage().getText();
 
-            // Asegurar que el usuario exista en DB
             UsuarioConfig config = configRepo.findById(chatId)
                     .orElseGet(() -> configRepo.save(new UsuarioConfig(chatId, nombre)));
 
-            // 1. Comando de inicio (Fase 0)
             if (texto.startsWith("/start")) {
-                historialChat.remove(chatId); // Reiniciar memoria de charla
                 onboardingService.iniciar(chatId, nombre);
                 return;
             }
 
-            // 2. Si está en medio del cuestionario de Onboarding
             if (onboardingService.estaEnOnboarding(config)) {
                 onboardingService.procesarTexto(chatId, texto);
                 return;
             }
 
-            // 3. Fase 1: Uso diario normal (Registro de Gastos + IA)
             procesarMensajeDiario(chatId, texto, nombre);
 
         } catch (Exception e) {
@@ -92,48 +86,40 @@ public class AsistenteBot extends TelegramLongPollingBot {
     }
 
     private void procesarMensajeDiario(long chatId, String texto, String nombre) {
-        // A. Detectar si el texto contiene un gasto
-        DetectorGastos.ResultadoDeteccion deteccion = detectorGastos.detectar(texto);
+        // 1. Guardar mensaje del usuario en BD
+        chatRepo.save(new ChatMessage(String.valueOf(chatId), "user", texto));
 
+        // 2. Detectar y guardar gasto (Lógica original)
+        DetectorGastos.ResultadoDeteccion deteccion = detectorGastos.detectar(texto);
         if (deteccion.esGasto()) {
-            // Guardar automáticamente
-            Gasto nuevoGasto = new Gasto(chatId, deteccion.monto(), deteccion.categoria(), deteccion.descripcion());
-            gastoRepo.save(nuevoGasto);
-            System.out.println("Gasto detectado y guardado: $" + deteccion.monto() + " en " + deteccion.categoria());
-            // Al guardar en BD antes de llamar a la IA, la IA ya lo verá en su "Contexto" actualizado.
+            gastoRepo.save(new Gasto(chatId, deteccion.monto(), deteccion.categoria(), deteccion.descripcion()));
         }
 
-        // B. Enviar mensaje a Groq IA para que responda naturalmente
-        List<Map<String, String>> historial = historialChat.computeIfAbsent(chatId, k -> new ArrayList<>());
+        // 3. Recuperar historial de BD para contexto
+        List<ChatMessage> history = chatRepo.findTop15ByChatIdOrderByTimestampAsc(String.valueOf(chatId));
+        List<Map<String, String>> historialParaIA = new ArrayList<>();
+        for (ChatMessage msg : history) {
+            historialParaIA.add(Map.of("role", msg.getRole(), "content", msg.getContent()));
+        }
 
-        String respuesta = cerebroIA.responder(texto, nombre, chatId, historial);
+        // 4. Enviar a IA
+        String respuesta = cerebroIA.responder(texto, nombre, chatId, historialParaIA);
 
-        // Actualizar memoria (max 5 turnos = 10 mensajes para no saturar tokens)
-        historial.add(Map.of("role", "user", "content", texto));
-        historial.add(Map.of("role", "assistant", "content", respuesta));
-        if (historial.size() > 10) historial.subList(0, 2).clear();
+        // 5. Guardar respuesta de la IA en BD
+        chatRepo.save(new ChatMessage(String.valueOf(chatId), "assistant", respuesta));
 
         enviarMensaje(chatId, respuesta);
     }
 
-    // ── Utilidades de Envío ─────────────────────────────────────────
-
     public void enviarMensaje(long chatId, String texto) {
-        try {
-            execute(new SendMessage(String.valueOf(chatId), texto));
-        } catch (Exception e) { e.printStackTrace(); }
+        try { execute(new SendMessage(String.valueOf(chatId), texto)); } catch (Exception e) { e.printStackTrace(); }
     }
 
-    // ✅ Este método faltaba y el OnboardingService lo necesita
     public void enviarConBotones(long chatId, String texto, List<List<InlineKeyboardButton>> botones) {
         SendMessage sm = new SendMessage(String.valueOf(chatId), texto);
         InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
         markup.setKeyboard(botones);
         sm.setReplyMarkup(markup);
-        try {
-            execute(sm);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        try { execute(sm); } catch (Exception e) { e.printStackTrace(); }
     }
 }
